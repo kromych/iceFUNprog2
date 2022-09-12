@@ -24,6 +24,10 @@ set(SOURCE
 	src/iceFUNprog2.cpp
 )
 
+set(HEADER
+	src/cdcacm.hpp
+)
+
 link_directories(
 	${LIBUSB_LIBRARY_DIRS}
 )
