@@ -129,17 +129,6 @@ public:
         }
 
         if (supports_line_state_encoding) {
-            // Set line state
-
-            ret = libusb_control_transfer(_dev_handle,
-                0x21, // CDC ACM req type
-                0x22, // SET_CONTROL_LINE_STATE
-                0x01 | 0x2, // DTR | RTS
-                0, nullptr, 0, 0);
-            if (ret != LIBUSB_SUCCESS) {
-                throw std::runtime_error(libusb_strerror(ret));
-            }
-
             // Set line encoding
 
             auto coding = LineCoding {};
@@ -148,21 +137,78 @@ public:
                 0x21, // GET_LINE_CODING
                 0, 0,
                 reinterpret_cast<std::uint8_t*>(&coding), sizeof(coding),
-                0);
+                5000);
             if (ret == LIBUSB_SUCCESS) {
-                coding.bps = 115200;
+                coding.bps = 3000000;
 
                 ret = libusb_control_transfer(_dev_handle,
                     0x21, // CDC ACM req type
                     0x20, // SET_LINE_CODING
                     0, 0,
                     reinterpret_cast<std::uint8_t*>(&coding), sizeof(coding),
-                    0);
+                    5000);
                 if (ret != LIBUSB_SUCCESS) {
                     throw std::runtime_error(libusb_strerror(ret));
                 }
             }
+
+            // Set line state
+
+            ret = libusb_control_transfer(_dev_handle,
+                0x21, // CDC ACM req type
+                0x22, // SET_CONTROL_LINE_STATE
+                0x01 | 0x2, // DTR | RTS
+                0, nullptr, 0, 5000);
+            if (ret != LIBUSB_SUCCESS) {
+                throw std::runtime_error(libusb_strerror(ret));
+            }
         }
+    }
+
+    std::uint16_t write(const std::uint8_t* data, std::uint16_t size)
+    {
+        std::uint16_t sent_total = 0;
+
+        while (sent_total < size) {
+            int sent_this_time = 0;
+            const auto to_send = std::min(_data_out->wMaxPacketSize, std::uint16_t(size - sent_total));
+
+            if (libusb_bulk_transfer(_dev_handle,
+                    _data_out->bEndpointAddress,
+                    const_cast<std::uint8_t*>(&data[sent_total]),
+                    to_send,
+                    &sent_this_time, 5000)
+                == LIBUSB_SUCCESS) {
+                sent_total += sent_this_time;
+            } else {
+                break;
+            }
+        }
+
+        return sent_total;
+    }
+
+    std::uint16_t read(std::uint8_t* data, std::uint16_t size)
+    {
+        std::uint16_t read_total = 0;
+
+        while (read_total < size) {
+            int read_this_time = 0;
+            const auto to_read = std::min(_data_out->wMaxPacketSize, std::uint16_t(size - read_total));
+
+            if (libusb_bulk_transfer(_dev_handle,
+                    _data_in->bEndpointAddress,
+                    &data[read_total],
+                    to_read,
+                    &read_this_time, 5000)
+                == LIBUSB_SUCCESS) {
+                read_total += read_this_time;
+            } else {
+                break;
+            }
+        }
+
+        return read_total;
     }
 
     ~CdcAcmUsbDevice()
@@ -345,6 +391,73 @@ private:
     size_t _dev_count;
 };
 
+enum IceFunCommands : std::uint8_t {
+    DONE = 0xb0,
+    GET_VER,
+    RESET_FPGA,
+    ERASE_CHIP,
+    ERASE_64k,
+    PROG_PAGE,
+    READ_PAGE,
+    VERIFY_PAGE,
+    GET_CDONE,
+    RELEASE_FPGA
+};
+
+std::uint8_t get_board_version(const std::shared_ptr<CdcAcmUsbDevice>& dev)
+{
+    const std::uint8_t get_ver = IceFunCommands::GET_VER;
+    std::uint8_t ver[2] {};
+
+    if (dev->write(&get_ver, sizeof(get_ver)) == sizeof(get_ver)) {
+        if (dev->read(ver, sizeof(ver)) == sizeof(ver)) {
+            if (ver[0] == 38) {
+                return ver[1];
+            }
+        }
+    }
+
+    throw std::runtime_error("Unable to get board version");
+}
+
+std::uint32_t reset_board(const std::shared_ptr<CdcAcmUsbDevice>& dev)
+{
+    const std::uint8_t reset = IceFunCommands::RESET_FPGA;
+    std::uint32_t flash_id = 0;
+
+    if (dev->write(&reset, sizeof(reset)) == sizeof(reset)) {
+        if (dev->read(reinterpret_cast<std::uint8_t*>(&flash_id), 3) == 3) {
+            return flash_id;
+        }
+    }
+
+    throw std::runtime_error("Unable to reset the board");
+}
+
+std::uint8_t run_board(const std::shared_ptr<CdcAcmUsbDevice>& dev)
+{
+    std::uint8_t run = IceFunCommands::RELEASE_FPGA;
+
+    if (dev->write(&run, sizeof(run)) == sizeof(run)) {
+        run = 0;
+        dev->read(&run, sizeof(run));
+    }
+
+    return run;
+}
+
+void program_board(const std::shared_ptr<CdcAcmUsbDevice>& dev)
+{
+    const auto board_version = get_board_version(dev);
+    fprintf(stdout, "Board version: %d\n", board_version);
+
+    const auto flash_id = reset_board(dev);
+    fprintf(stdout, "Flash ID: %#06x\n", flash_id);
+
+    const auto run = run_board(dev);
+    fprintf(stdout, "Run: %#02x\n", run);
+}
+
 int main()
 try {
     /* iceFUN uses a PIC16LF1459 to facilitate communication over USB (CDC-ACM)
@@ -364,6 +477,8 @@ try {
         throw std::runtime_error(
             "More than one supported device found. Please connect just one device");
     }
+
+    program_board(devices.front());
 
     return EXIT_SUCCESS;
 } catch (const std::exception& e) {
