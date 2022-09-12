@@ -122,7 +122,7 @@ public:
             auto buf = ctrl_if->altsetting[0].extra;
             while (size >= 2) {
                 // ACM functional description, there are many others
-                if (buf[1] == (LIBUSB_REQUEST_TYPE_CLASS | LIBUSB_DT_INTERFACE) && buf[2] == 2) {
+                if (buf[1] == ((std::uint8_t)LIBUSB_REQUEST_TYPE_CLASS | (std::uint8_t)LIBUSB_DT_INTERFACE) && buf[2] == 2) {
                     supports_line_state_encoding = buf[0] == 4 && // Length must be 4 bytes
                         (buf[3] & 0x02);
                     break;

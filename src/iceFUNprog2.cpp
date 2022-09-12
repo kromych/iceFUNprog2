@@ -14,6 +14,7 @@
 */
 
 #include "cdcacm.hpp"
+#include <cstring>
 
 constexpr std::uint32_t MAX_FLASH_SIZE = 1048576;
 
