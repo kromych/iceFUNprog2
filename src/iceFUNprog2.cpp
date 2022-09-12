@@ -8,6 +8,13 @@
 
 class CdcAcmUsbDevice {
 public:
+    struct LineCoding {
+        std::uint32_t bps;
+        std::uint8_t stop_bits;
+        std::uint8_t parity;
+        std::uint8_t data_bits;
+    } __attribute__((__packed__));
+
     CdcAcmUsbDevice(libusb_device* dev, libusb_device_descriptor desc)
         : _dev(dev)
         , _desc(desc)
@@ -124,20 +131,37 @@ public:
         if (supports_line_state_encoding) {
             // Set line state
 
-            ret = libusb_control_transfer(_dev_handle, 0x21, 0x22, 0x01 | 0x2, // DTR | RTS
+            ret = libusb_control_transfer(_dev_handle,
+                0x21, // CDC ACM req type
+                0x22, // SET_CONTROL_LINE_STATE
+                0x01 | 0x2, // DTR | RTS
                 0, nullptr, 0, 0);
             if (ret != LIBUSB_SUCCESS) {
                 throw std::runtime_error(libusb_strerror(ret));
             }
 
-            // Set line encoding to 9600 8N1
+            // Set line encoding
 
-            //        std::uint8_t enc[] = {0x80, 0x25, 0x00, 0x00, 0x00, 0x00, 0x08};
-            //        ret = libusb_control_transfer(_dev_handle, 0x21, 0x20, 0, 0, enc,
-            //                                      sizeof(enc), 0);
-            //        if (ret != LIBUSB_SUCCESS) {
-            //            throw std::runtime_error(libusb_strerror(ret));
-            //        }
+            auto coding = LineCoding {};
+            ret = libusb_control_transfer(_dev_handle,
+                0x21, // CDC ACM req type
+                0x21, // GET_LINE_CODING
+                0, 0,
+                reinterpret_cast<std::uint8_t*>(&coding), sizeof(coding),
+                0);
+            if (ret == LIBUSB_SUCCESS) {
+                coding.bps = 115200;
+
+                ret = libusb_control_transfer(_dev_handle,
+                    0x21, // CDC ACM req type
+                    0x20, // SET_LINE_CODING
+                    0, 0,
+                    reinterpret_cast<std::uint8_t*>(&coding), sizeof(coding),
+                    0);
+                if (ret != LIBUSB_SUCCESS) {
+                    throw std::runtime_error(libusb_strerror(ret));
+                }
+            }
         }
     }
 
