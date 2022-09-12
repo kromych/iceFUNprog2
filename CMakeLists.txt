@@ -24,7 +24,7 @@ set(SOURCE
 	src/iceFUNprog2.cpp
 )
 
-set(HEADER
+set(HEADERS
 	src/cdcacm.hpp
 )
 
