@@ -16,6 +16,8 @@
 #include "cdcacm.hpp"
 #include "cmdline.hpp"
 
+#include <fstream>
+
 constexpr std::uint32_t MAX_FLASH_SIZE = 1048576;
 
 enum IceFunCommands : std::uint8_t {
@@ -98,28 +100,23 @@ void write_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
     }
 
     ssize_t file_size = 0;
-    size_t wrote = 0;
 
-    auto f = fopen(path.c_str(), "rb");
-    if (f == nullptr) {
+    std::ifstream f(path, std::ios::in | std::ios::binary);
+    if (!f) {
         throw std::runtime_error("Cannot open the file");
     }
 
-    if (fseek(f, 0, SEEK_END)) {
-        throw std::runtime_error("Cannot seek");
-    }
-    file_size = ftell(f);
-    if (file_size < 0) {
-        throw std::runtime_error("Cannot get size of the file");
-    }
-    if (fseek(f, 0, SEEK_SET)) {
-        throw std::runtime_error("Cannot seek");
-    }
+    f.seekg(0, f.end);
+    file_size = f.tellg();
+    f.seekg(0, f.beg);
 
     const std::uint32_t size = size_opt.value_or(file_size);
     if (offset + size > MAX_FLASH_SIZE) {
         throw std::runtime_error("Cannot fit the data into the flash");
     }
+
+    auto data = std::make_unique<char[]>(size);
+    f.read(data.get(), size);
 
     const auto board_version = get_board_version(dev);
     fprintf(stdout, "Board version: %d\n", board_version);
@@ -127,13 +124,93 @@ void write_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
     const auto flash_id = reset_board(dev);
     fprintf(stdout, "Reset, flash ID: %#06x\n", flash_id);
 
-    fprintf(stdout, "TODO: Writing %d bytes starting at offset %d from '%s' to the flash\n",
-        size, offset, path.c_str());
+    const auto start_sector = (offset >> 16);
+    const auto end_sector = ((offset + size) >> 16) + 1;
 
-    fclose(f);
+    fprintf(stdout, "Erasing %d 64k sectors starting at sector %d\n",
+        end_sector - start_sector - 1, start_sector);
+    for (auto sector_idx = start_sector; sector_idx < end_sector; ++sector_idx) {
+        std::uint8_t erase[2] = { IceFunCommands::ERASE_64k,
+            (std::uint8_t)sector_idx };
 
+        if (dev->write(erase, sizeof(erase)) != sizeof(erase)) {
+            throw std::runtime_error("Error when erasing sectors");
+        }
+        if (dev->read(erase, 1) != 1) {
+            throw std::runtime_error("Error when getting status for the erased sectors");
+        }
+
+        fprintf(stdout, ".");
+    }
     fprintf(stdout, "\n");
-    fprintf(stdout, "Wrote %ld bytes\n", wrote);
+
+    {
+        fprintf(stdout, "Writing %d bytes starting at offset %d from '%s' to the flash\n",
+            size, offset, path.c_str());
+        std::uint32_t addr = offset;
+        std::uint32_t written = 0;
+        std::uint32_t end_addr = addr + size;
+        while (addr < end_addr) {
+            std::uint8_t write_data[260] {};
+            std::uint8_t status[4] {};
+
+            write_data[0] = IceFunCommands::PROG_PAGE;
+            write_data[1] = (addr >> 16);
+            write_data[2] = (addr >> 8);
+            write_data[3] = addr;
+
+            auto write_this_time = std::min((std::uint32_t)256, (std::uint32_t)(size - written));
+            memcpy(write_data + 4, data.get() + written, write_this_time);
+
+            dev->write(write_data, 4 + write_this_time);
+            dev->read(status, sizeof(status));
+            if (status[0] != 0) {
+                fprintf(stderr, "\nError when writing, status: #%04x #%04x #%04x #%04x\n",
+                    status[0], status[1], status[2], status[3]);
+                break;
+            }
+            fprintf(stdout, ".");
+
+            written += write_this_time;
+            addr += write_this_time;
+        }
+        fprintf(stdout, "\n");
+        fprintf(stdout, "Wrote %u bytes\n", written);
+    }
+
+    {
+        fprintf(stdout, "Verifying %d bytes starting at offset %d from '%s' to the flash\n",
+            size, offset, path.c_str());
+        std::uint32_t addr = offset;
+        std::uint32_t verified = 0;
+        std::uint32_t end_addr = addr + size;
+        while (addr < end_addr) {
+            std::uint8_t verify_data[260] {};
+            std::uint8_t status[4] {};
+
+            verify_data[0] = IceFunCommands::VERIFY_PAGE;
+            verify_data[1] = (addr >> 16);
+            verify_data[2] = (addr >> 8);
+            verify_data[3] = addr;
+
+            auto verified_this_time = std::min((std::uint32_t)256, (std::uint32_t)(size - verified));
+            memcpy(verify_data + 4, data.get() + verified, verified_this_time);
+
+            dev->write(verify_data, 4 + verified_this_time);
+            dev->read(status, sizeof(status));
+            if (status[0] != 0) {
+                fprintf(stderr, "\nError when verifying, status: #%04x #%04x #%04x #%04x\n",
+                    status[0], status[1], status[2], status[3]);
+                break;
+            }
+            fprintf(stdout, ".");
+
+            verified += verified_this_time;
+            addr += verified_this_time;
+        }
+        fprintf(stdout, "\n");
+        fprintf(stdout, "Verified %u bytes\n", verified);
+    }
 
     const auto run = run_board(dev);
     fprintf(stdout, "Run: %#02x\n", run);
@@ -154,8 +231,8 @@ void read_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
         throw std::runtime_error("The size is too large");
     }
 
-    auto f = fopen(path.c_str(), "wb");
-    if (f == nullptr) {
+    std::ofstream f(path, std::ios::out | std::ios::binary);
+    if (!f) {
         throw std::runtime_error("Cannot open the file");
     }
 
@@ -170,16 +247,16 @@ void read_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
 
     std::uint32_t read = 0;
     while (read < size) {
-        std::uint8_t cmd_buf[260] {};
+        char cmd_buf[260] {};
 
         cmd_buf[0] = IceFunCommands::READ_PAGE;
         cmd_buf[1] = offset >> 16;
         cmd_buf[2] = offset >> 8;
         cmd_buf[3] = offset;
 
-        if (dev->write(cmd_buf, 4) == 4) {
-            if (dev->read(cmd_buf + 4, 256) == 256) {
-                fwrite(cmd_buf + 4, 256, 1, f);
+        if (dev->write((std::uint8_t*)cmd_buf, 4) == 4) {
+            if (dev->read((std::uint8_t*)cmd_buf + 4, 256) == 256) {
+                f.write(cmd_buf + 4, 256);
             } else {
                 break;
             }
@@ -192,8 +269,6 @@ void read_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
         read += 256;
         offset += 256;
     }
-
-    fclose(f);
 
     fprintf(stdout, "\n");
     fprintf(stdout, "Saved %d bytes to '%s'\n", read, path.c_str());
