@@ -26,6 +26,7 @@ set(SOURCE
 
 set(HEADERS
 	src/cdcacm.hpp
+	src/cmdline.hpp
 )
 
 link_directories(

@@ -14,7 +14,7 @@
 */
 
 #include "cdcacm.hpp"
-#include <cstring>
+#include "cmdline.hpp"
 
 constexpr std::uint32_t MAX_FLASH_SIZE = 1048576;
 
@@ -88,18 +88,73 @@ void cycle_board(const std::shared_ptr<CdcAcmUsbDevice>& dev)
 }
 
 void write_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
-    std::uint32_t offset,
-    const char* path)
+    std::optional<std::uint32_t> offset_opt,
+    std::optional<std::uint32_t> size_opt,
+    const std::string& path)
 {
+    const std::uint32_t offset = offset_opt.value_or(0);
+    if (offset > MAX_FLASH_SIZE) {
+        throw std::runtime_error("The offset is too large");
+    }
+
+    ssize_t file_size = 0;
+    size_t wrote = 0;
+
+    auto f = fopen(path.c_str(), "rb");
+    if (f == nullptr) {
+        throw std::runtime_error("Cannot open the file");
+    }
+
+    if (fseek(f, 0, SEEK_END)) {
+        throw std::runtime_error("Cannot seek");
+    }
+    file_size = ftell(f);
+    if (file_size < 0) {
+        throw std::runtime_error("Cannot get size of the file");
+    }
+    if (fseek(f, 0, SEEK_SET)) {
+        throw std::runtime_error("Cannot seek");
+    }
+
+    const std::uint32_t size = size_opt.value_or(file_size);
+    if (offset + size > MAX_FLASH_SIZE) {
+        throw std::runtime_error("Cannot fit the data into the flash");
+    }
+
+    const auto board_version = get_board_version(dev);
+    fprintf(stdout, "Board version: %d\n", board_version);
+
+    const auto flash_id = reset_board(dev);
+    fprintf(stdout, "Reset, flash ID: %#06x\n", flash_id);
+
+    fprintf(stdout, "TODO: Writing %d bytes starting at offset %d from '%s' to the flash\n",
+        size, offset, path.c_str());
+
+    fclose(f);
+
+    fprintf(stdout, "\n");
+    fprintf(stdout, "Wrote %ld bytes\n", wrote);
+
+    const auto run = run_board(dev);
+    fprintf(stdout, "Run: %#02x\n", run);
 }
 
 void read_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
-    std::uint32_t offset,
-    const char* path)
+    std::optional<std::uint32_t> offset_opt,
+    std::optional<std::uint32_t> size_opt,
+    const std::string& path)
 {
-    std::uint32_t size = MAX_FLASH_SIZE;
+    std::uint32_t offset = offset_opt.value_or(0);
+    if (offset > MAX_FLASH_SIZE) {
+        throw std::runtime_error("The offset is too large");
+    }
 
-    auto f = fopen(path, "wb");
+    const std::uint32_t size = size_opt.value_or(MAX_FLASH_SIZE - offset);
+    if (size > MAX_FLASH_SIZE) {
+        throw std::runtime_error("The size is too large");
+    }
+
+    auto f = fopen(path.c_str(), "wb");
     if (f == nullptr) {
         throw std::runtime_error("Cannot open the file");
     }
@@ -111,7 +166,7 @@ void read_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
     fprintf(stdout, "Reset, flash ID: %#06x\n", flash_id);
 
     fprintf(stdout, "Reading %d bytes starting at offset %d to '%s'\n",
-        size, offset, path);
+        size, offset, path.c_str());
 
     std::uint32_t read = 0;
     while (read < size) {
@@ -141,7 +196,7 @@ void read_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
     fclose(f);
 
     fprintf(stdout, "\n");
-    fprintf(stdout, "Saved %d bytes to '%s'\n", read, path);
+    fprintf(stdout, "Saved %d bytes to '%s'\n", read, path.c_str());
 
     const auto run = run_board(dev);
     fprintf(stdout, "Run: %#02x\n", run);
@@ -156,57 +211,34 @@ void disable_stdio_buffering()
 void usage(const char* prog_name)
 {
     fprintf(stderr, "Cross-platform programming tool for the Devantech iceFUN board.\n");
-    fprintf(stderr, "Usage: %s <options>\n", prog_name);
-    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "Usage: %s <parameters> [options]\n", prog_name);
+    fprintf(stderr, "Parameters:\n");
     fprintf(stderr, "  -h                display usage information and exit.\n");
-    fprintf(stderr, "  -o <offset>       start address for write or read (default: 0),\n");
-    fprintf(stderr, "                    sufix of 'k' signifies kibibytes, 'M' stands for mebibytes,\n");
-    fprintf(stderr, "                    to use hexadecimals, prepend '0x' to the argument.\n");
+    fprintf(stderr, "  -c                Cycle the board.\n");
     fprintf(stderr, "  -r <output file>  Save the contents of the on-board flash to the file.\n");
     fprintf(stderr, "  -w <input file>   Write the contents of the file to the on-board flash.\n");
-    fprintf(stderr, "  -c                Cycle the board.\n");
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "  -o <offset>       Optional start address for write or read (default: 0),\n");
+    fprintf(stderr, "                    the suffix of 'k' signifies kibibytes, 'M' stands for mebibytes,\n");
+    fprintf(stderr, "                    to use hexadecimals, prepend '0x' to the argument.\n");
+    fprintf(stderr, "  -s <size>         Optional size to write or read, same syntax as for -o.\n");
     fprintf(stderr, "Examples:\n");
     fprintf(stderr, "  %s -w turing.bin\n", prog_name);
     fprintf(stderr, "  %s -r butterfly.bin -o 0x40k\n", prog_name);
     fprintf(stderr, "\n");
 }
 
-enum class Action {
-    UNKNOWN,
-    PRINT_USAGE,
-    CYCLE_BOARD,
-    READ_BOARD,
-    WRITE_BOARD
-};
-
 int main(int argc, char** argv)
 try {
-    /* iceFUN uses a PIC16LF1459 to facilitate communication over USB (CDC-ACM)
-       and to provide programming for the SPI flash memory */
-
-    constexpr std::uint16_t PRODUCT_ID = 0xffee; // Devantech USB-ISS
-    constexpr std::uint16_t VENDOR_ID = 0x04d8; // Microchip Technology Inc.
-
-    char path[] = "fw.bin";
-    std::uint32_t offset = 0;
-    auto action = Action::UNKNOWN;
-
     disable_stdio_buffering();
 
-    if (argc == 2) {
-        if (!strcmp(argv[1], "-h")) {
-            action = Action::PRINT_USAGE;
-        } else if (!strcmp(argv[1], "-c")) {
-            action = Action::CYCLE_BOARD;
-        }
-    }
-
-    if (action == Action::UNKNOWN) {
+    const auto params = CommandLine(argc, argv);
+    if (params.action == Action::UNKNOWN) {
         usage(argv[0]);
         return EXIT_FAILURE;
     }
 
-    if (action == Action::PRINT_USAGE) {
+    if (params.action == Action::PRINT_USAGE) {
         usage(argv[0]);
         return EXIT_SUCCESS;
     }
@@ -214,7 +246,7 @@ try {
     auto bus = Usb();
     bus.open();
 
-    auto devices = bus.find(VENDOR_ID, PRODUCT_ID);
+    const auto devices = bus.find(params.vendor_id, params.product_id);
     if (devices.empty()) {
         throw std::runtime_error("No supported devices found");
     }
@@ -223,15 +255,15 @@ try {
             "More than one supported device found. Please connect just one device");
     }
 
-    auto dev = devices.front();
-    if (action == Action::CYCLE_BOARD) {
+    const auto dev = devices.front();
+    if (params.action == Action::CYCLE_BOARD) {
         cycle_board(dev);
         return EXIT_SUCCESS;
-    } else if (action == Action::READ_BOARD) {
-        read_board(dev, offset, path);
+    } else if (params.action == Action::READ_BOARD) {
+        read_board(dev, params.offset, params.size, params.path);
         return EXIT_SUCCESS;
-    } else if (action == Action::WRITE_BOARD) {
-        write_board(dev, offset, path);
+    } else if (params.action == Action::WRITE_BOARD) {
+        write_board(dev, params.offset, params.size, params.path);
         return EXIT_SUCCESS;
     }
 

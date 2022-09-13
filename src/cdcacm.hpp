@@ -324,41 +324,41 @@ public:
                 throw std::runtime_error(libusb_strerror(ret));
             }
 
-            {
-                libusb_device_handle* handle {};
-                if (libusb_open(usb_dev, &handle) == LIBUSB_SUCCESS) {
-                    std::uint8_t vendor[256] {};
-                    std::uint8_t product[256] {};
-                    std::uint8_t serial[256] {};
-
-                    libusb_get_string_descriptor_ascii(handle,
-                        desc.iManufacturer,
-                        vendor,
-                        sizeof(vendor) - 1);
-                    libusb_get_string_descriptor_ascii(handle,
-                        desc.iProduct,
-                        product,
-                        sizeof(product) - 1);
-                    libusb_get_string_descriptor_ascii(handle,
-                        desc.iSerialNumber,
-                        serial,
-                        sizeof(serial) - 1);
-                    fprintf(stdout,
-                        "Device %#06x:%#06x @ (bus %03d, device %03d, vendor '%s', product '%s', serial '%s')\n",
-                        desc.idVendor,
-                        desc.idProduct,
-                        libusb_get_bus_number(usb_dev),
-                        libusb_get_device_address(usb_dev),
-                        vendor,
-                        product,
-                        serial);
-
-                    libusb_close(handle);
-                }
-            }
-
             auto add_device = false;
             if ((pid == 0 && vid == 0) || (desc.idProduct == pid && desc.idVendor == vid)) {
+                {
+                    libusb_device_handle* handle {};
+                    if (libusb_open(usb_dev, &handle) == LIBUSB_SUCCESS) {
+                        std::uint8_t vendor[256] {};
+                        std::uint8_t product[256] {};
+                        std::uint8_t serial[256] {};
+
+                        libusb_get_string_descriptor_ascii(handle,
+                            desc.iManufacturer,
+                            vendor,
+                            sizeof(vendor) - 1);
+                        libusb_get_string_descriptor_ascii(handle,
+                            desc.iProduct,
+                            product,
+                            sizeof(product) - 1);
+                        libusb_get_string_descriptor_ascii(handle,
+                            desc.iSerialNumber,
+                            serial,
+                            sizeof(serial) - 1);
+                        fprintf(stdout,
+                            "Device %#06x:%#06x @ (bus %03d, device %03d, vendor '%s', product '%s', serial '%s')\n",
+                            desc.idVendor,
+                            desc.idProduct,
+                            libusb_get_bus_number(usb_dev),
+                            libusb_get_device_address(usb_dev),
+                            vendor,
+                            product,
+                            serial);
+
+                        libusb_close(handle);
+                    }
+                }
+
                 for (auto cfg_idx = 0; cfg_idx < desc.bNumConfigurations; ++cfg_idx) {
                     libusb_config_descriptor* cfg;
 
@@ -392,10 +392,7 @@ public:
             }
 
             if (add_device) {
-                puts("\tSupported!");
                 devices.emplace_back(std::make_shared<CdcAcmUsbDevice>(usb_dev, desc));
-            } else {
-                puts("\tNot supported.");
             }
         }
 
