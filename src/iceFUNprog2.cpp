@@ -330,7 +330,7 @@ try {
             "More than one supported device found. Please connect just one device");
     }
 
-    const auto dev = devices.front();
+    const auto& dev = devices.front();
     if (params.action == Action::CYCLE_BOARD) {
         cycle_board(dev);
         return EXIT_SUCCESS;
