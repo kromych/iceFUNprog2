@@ -18,7 +18,7 @@
 #include "cdcacm.hpp"
 #include "cmdline.hpp"
 
-constexpr std::uint32_t MAX_FLASH_SIZE = 1048576;
+constexpr std::uint32_t MAX_FLASH_SIZE_BYTES = 1048576;
 
 enum IceFunCommands : std::uint8_t {
     DONE = 0xb0,
@@ -91,7 +91,7 @@ void write_board(
     std::optional<std::uint32_t> size_opt,
     const std::string& path) {
     const std::uint32_t offset = offset_opt.value_or(0);
-    if (offset > MAX_FLASH_SIZE) {
+    if (offset > MAX_FLASH_SIZE_BYTES) {
         throw std::runtime_error("The offset is too large");
     }
 
@@ -107,7 +107,7 @@ void write_board(
     f.seekg(0, f.beg);
 
     const std::uint32_t size = size_opt.value_or(file_size);
-    if (offset + size > MAX_FLASH_SIZE) {
+    if (offset + size > MAX_FLASH_SIZE_BYTES) {
         throw std::runtime_error("Cannot fit the data into the flash");
     }
 
@@ -245,12 +245,12 @@ void read_board(
     const std::string& path) {
     std::uint32_t offset = offset_opt.value_or(0);
 
-    if (offset > MAX_FLASH_SIZE) {
+    if (offset > MAX_FLASH_SIZE_BYTES) {
         throw std::runtime_error("The offset is too large");
     }
 
-    const std::uint32_t size = size_opt.value_or(MAX_FLASH_SIZE - offset);
-    if (size > MAX_FLASH_SIZE) {
+    const std::uint32_t size = size_opt.value_or(MAX_FLASH_SIZE_BYTES - offset);
+    if (size > MAX_FLASH_SIZE_BYTES) {
         throw std::runtime_error("The size is too large");
     }
 
@@ -277,9 +277,9 @@ void read_board(
         char cmd_buf[260] {};
 
         cmd_buf[0] = IceFunCommands::READ_PAGE;
-        cmd_buf[1] = offset >> 16;
-        cmd_buf[2] = offset >> 8;
-        cmd_buf[3] = offset;
+        cmd_buf[1] = (char)(offset >> 16);
+        cmd_buf[2] = (char)(offset >> 8);
+        cmd_buf[3] = (char)(offset);
 
         if (dev->write((std::uint8_t*)cmd_buf, 4) == 4) {
             if (dev->read((std::uint8_t*)cmd_buf + 4, 256) == 256) {
