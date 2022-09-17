@@ -23,19 +23,51 @@
 #include <stdexcept>
 #include <vector>
 
+// Some magic numbers from the ACM specification
+
 #define USB_CDC_REQ_SET_LINE_CODING 0x20
 #define USB_CDC_REQ_GET_LINE_CODING 0x21
 #define USB_CDC_REQ_SET_CONTROL_LINE_STATE 0x22
 
+#define USB_CDC_1_STOP_BITS 0
+#define USB_CDC_1_5_STOP_BITS 1
+#define USB_CDC_2_STOP_BITS 2
+
+#define USB_CDC_NO_PARITY 0
+#define USB_CDC_ODD_PARITY 1
+#define USB_CDC_EVEN_PARITY 2
+#define USB_CDC_MARK_PARITY 3
+#define USB_CDC_SPACE_PARITY 4
+
+#define USB_CDC_ACM_TYPE 0x02
+
+#define USB_CDC_SUBCLASS_ACM 0x02
+#define USB_CDC_SUBCLASS_ETHERNET 0x06
+#define USB_CDC_SUBCLASS_WHCM 0x08
+#define USB_CDC_SUBCLASS_DMM 0x09
+#define USB_CDC_SUBCLASS_MDLM 0x0a
+#define USB_CDC_SUBCLASS_OBEX 0x0b
+#define USB_CDC_SUBCLASS_EEM 0x0c
+#define USB_CDC_SUBCLASS_NCM 0x0d
+#define USB_CDC_SUBCLASS_MBIM 0x0e
+
+#define USB_CDC_PROTO_NONE 0
+
+#define USB_CDC_ACM_PROTO_AT_V25TER 1
+#define USB_CDC_ACM_PROTO_AT_PCCA101 2
+#define USB_CDC_ACM_PROTO_AT_PCCA101_WAKE 3
+#define USB_CDC_ACM_PROTO_AT_GSM 4
+#define USB_CDC_ACM_PROTO_AT_3G 5
+#define USB_CDC_ACM_PROTO_AT_CDMA 6
+#define USB_CDC_ACM_PROTO_VENDOR 0xff
+
+#define USB_CDC_COMM_FEATURE 0x01
+#define USB_CDC_CAP_LINE 0x02
+#define USB_CDC_CAP_BRK 0x04
+#define USB_CDC_CAP_NOTIFY 0x08
+
 class CdcAcmUsbDevice {
   public:
-    struct LineCoding {
-        std::uint32_t bps;
-        std::uint8_t stop_bits;
-        std::uint8_t parity;
-        std::uint8_t data_bits;
-    } __attribute__((packed));
-
     CdcAcmUsbDevice(libusb_device* dev, libusb_device_descriptor desc) :
         _dev(dev),
         _desc(desc) {
@@ -89,9 +121,10 @@ class CdcAcmUsbDevice {
         }
 
         if (ctrl_if->altsetting[0].bInterfaceClass != LIBUSB_CLASS_COMM
-            || ctrl_if->altsetting[0].bInterfaceSubClass != 2 ||  // ACM (modem)
-            ctrl_if->altsetting[0].bInterfaceProtocol
-                != 1)  // AT-commands (v.25ter)
+            || ctrl_if->altsetting[0].bInterfaceSubClass
+                != USB_CDC_SUBCLASS_ACM  // ACM (modem)
+            || ctrl_if->altsetting[0].bInterfaceProtocol
+                != USB_CDC_ACM_PROTO_AT_V25TER)  // AT-commands (v.25ter)
         {
             throw std::runtime_error("Control interface is not supported");
         }
@@ -132,14 +165,16 @@ class CdcAcmUsbDevice {
             auto size = ctrl_if->altsetting[0].extra_length;
             auto buf = ctrl_if->altsetting[0].extra;
             while (size >= 2) {
-                // ACM functional description, there are many others
                 if (buf[1]
                         == ((std::uint8_t)LIBUSB_REQUEST_TYPE_CLASS
                             | (std::uint8_t)LIBUSB_DT_INTERFACE)
-                    && buf[2] == 2) {
-                    supports_line_state_encoding = buf[0] == 4
-                        &&  // Length must be 4 bytes
-                        (buf[3] & 0x02);
+                    && buf[2] == USB_CDC_ACM_TYPE) {
+                    // ACM functional description, there are many others
+
+                    const auto* acm_desc = (AcmDesc*)buf;
+                    supports_line_state_encoding =
+                        acm_desc->bLength == sizeof(AcmDesc)
+                        && (acm_desc->bmCapabilities & 0x02);
                     break;
                 }
 
@@ -171,17 +206,12 @@ class CdcAcmUsbDevice {
                 0,
                 nullptr,
                 0,
-                5000);
+                _timeout_msec);
             if (ret < LIBUSB_SUCCESS) {
                 throw std::runtime_error(libusb_strerror(ret));
             }
 
-            // Set line encoding to 8N2 @ 115,200 baud
-
-            auto coding = LineCoding {};
-            coding.bps = 115200;
-            coding.stop_bits = 2;
-            coding.data_bits = 8;
+            // Set line encoding
 
             ret = libusb_control_transfer(
                 _dev_handle,
@@ -189,9 +219,9 @@ class CdcAcmUsbDevice {
                 USB_CDC_REQ_SET_LINE_CODING,
                 0,
                 0,
-                reinterpret_cast<std::uint8_t*>(&coding),
-                sizeof(coding),
-                5000);
+                reinterpret_cast<std::uint8_t*>(&_line_coding),
+                sizeof(_line_coding),
+                _timeout_msec);
             if (ret < LIBUSB_SUCCESS) {
                 throw std::runtime_error(libusb_strerror(ret));
             }
@@ -206,7 +236,7 @@ class CdcAcmUsbDevice {
                 0,
                 nullptr,
                 0,
-                5000);
+                _timeout_msec);
             if (ret < LIBUSB_SUCCESS) {
                 throw std::runtime_error(libusb_strerror(ret));
             }
@@ -228,7 +258,7 @@ class CdcAcmUsbDevice {
                     const_cast<std::uint8_t*>(&data[sent_total]),
                     to_send,
                     &sent_this_time,
-                    5000)
+                    _timeout_msec)
                 == LIBUSB_SUCCESS) {
                 sent_total += sent_this_time;
             } else {
@@ -254,7 +284,7 @@ class CdcAcmUsbDevice {
                     &data[read_total],
                     to_read,
                     &read_this_time,
-                    5000)
+                    _timeout_msec)
                 == LIBUSB_SUCCESS) {
                 read_total += read_this_time;
             } else {
@@ -278,6 +308,29 @@ class CdcAcmUsbDevice {
     }
 
   private:
+    struct LineCoding {
+        std::uint32_t bps;
+        std::uint8_t stop_bits;
+        std::uint8_t parity;
+        std::uint8_t data_bits;
+    } __attribute__((packed));
+
+    // "Abstract Control Management Descriptor" from CDC spec 5.2.3.3
+    struct AcmDesc {
+        std::uint8_t bLength;
+        std::uint8_t bDescriptorType;
+        std::uint8_t bDescriptorSubType;
+        std::uint8_t bmCapabilities;
+    } __attribute__((packed));
+
+    // Set line encoding to 8N2 @ 115,200 baud by default
+    LineCoding _line_coding = {
+        .bps = 115200,
+        .stop_bits = USB_CDC_2_STOP_BITS,
+        .parity = USB_CDC_NO_PARITY,
+        .data_bits = 8};
+    int _timeout_msec = 5000;
+
     libusb_device* _dev {};
     libusb_device_handle* _dev_handle {};
     libusb_config_descriptor* _cfg {};
@@ -420,10 +473,10 @@ class Usb {
 
                             add_device |=
                                 (intf->bInterfaceClass == LIBUSB_CLASS_COMM
-                                 && intf->bInterfaceSubClass == 2
-                                 &&  // ACM (modem)
-                                 intf->bInterfaceProtocol
-                                     == 1);  // AT-commands (v.25ter)
+                                 && intf->bInterfaceSubClass
+                                     == USB_CDC_SUBCLASS_ACM  // ACM (modem)
+                                 && intf->bInterfaceProtocol
+                                     == USB_CDC_ACM_PROTO_AT_V25TER);  // AT-commands (v.25ter)
                         }
                     }
 
