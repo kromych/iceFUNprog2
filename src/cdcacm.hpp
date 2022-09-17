@@ -23,6 +23,10 @@
 #include <stdexcept>
 #include <vector>
 
+#define USB_CDC_REQ_SET_LINE_CODING 0x20
+#define USB_CDC_REQ_GET_LINE_CODING 0x21
+#define USB_CDC_REQ_SET_CONTROL_LINE_STATE 0x22
+
 class CdcAcmUsbDevice {
   public:
     struct LineCoding {
@@ -30,7 +34,7 @@ class CdcAcmUsbDevice {
         std::uint8_t stop_bits;
         std::uint8_t parity;
         std::uint8_t data_bits;
-    } __attribute__((__packed__));
+    } __attribute__((packed));
 
     CdcAcmUsbDevice(libusb_device* dev, libusb_device_descriptor desc) :
         _dev(dev),
@@ -43,12 +47,12 @@ class CdcAcmUsbDevice {
         }
 
         ret = libusb_open(_dev, &_dev_handle);
-        if (ret != LIBUSB_SUCCESS) {
+        if (ret < LIBUSB_SUCCESS) {
             throw std::runtime_error(libusb_strerror(ret));
         }
 
         ret = libusb_get_config_descriptor(_dev, 0, &_cfg);
-        if (ret != LIBUSB_SUCCESS) {
+        if (ret < LIBUSB_SUCCESS) {
             throw std::runtime_error(libusb_strerror(ret));
         }
 
@@ -151,53 +155,59 @@ class CdcAcmUsbDevice {
                 libusb_detach_kernel_driver(_dev_handle, if_idx);
             }
             ret = libusb_claim_interface(_dev_handle, if_idx);
-            if (ret != LIBUSB_SUCCESS) {
+            if (ret < LIBUSB_SUCCESS) {
                 throw std::runtime_error(libusb_strerror(ret));
             }
         }
 
         if (supports_line_state_encoding) {
-            // Set line encoding
+            // Set line state to disable communications
 
-            auto coding = LineCoding {};
             ret = libusb_control_transfer(
                 _dev_handle,
-                0x21,  // CDC ACM req type
-                0x21,  // GET_LINE_CODING
+                LIBUSB_REQUEST_TYPE_CLASS | LIBUSB_RECIPIENT_INTERFACE,
+                USB_CDC_REQ_SET_CONTROL_LINE_STATE,
+                0,  // Disable communication
+                0,
+                nullptr,
+                0,
+                5000);
+            if (ret < LIBUSB_SUCCESS) {
+                throw std::runtime_error(libusb_strerror(ret));
+            }
+
+            // Set line encoding to 8N2 @ 115,200 baud
+
+            auto coding = LineCoding {};
+            coding.bps = 115200;
+            coding.stop_bits = 2;
+            coding.data_bits = 8;
+
+            ret = libusb_control_transfer(
+                _dev_handle,
+                LIBUSB_REQUEST_TYPE_CLASS | LIBUSB_RECIPIENT_INTERFACE,
+                USB_CDC_REQ_SET_LINE_CODING,
                 0,
                 0,
                 reinterpret_cast<std::uint8_t*>(&coding),
                 sizeof(coding),
                 5000);
-            if (ret == LIBUSB_SUCCESS) {
-                coding.bps = 3000000;
-
-                ret = libusb_control_transfer(
-                    _dev_handle,
-                    0x21,  // CDC ACM req type
-                    0x20,  // SET_LINE_CODING
-                    0,
-                    0,
-                    reinterpret_cast<std::uint8_t*>(&coding),
-                    sizeof(coding),
-                    5000);
-                if (ret != LIBUSB_SUCCESS) {
-                    throw std::runtime_error(libusb_strerror(ret));
-                }
+            if (ret < LIBUSB_SUCCESS) {
+                throw std::runtime_error(libusb_strerror(ret));
             }
 
-            // Set line state
+            // Set line state to DTR | RTS
 
             ret = libusb_control_transfer(
                 _dev_handle,
-                0x21,  // CDC ACM req type
-                0x22,  // SET_CONTROL_LINE_STATE
+                LIBUSB_REQUEST_TYPE_CLASS | LIBUSB_RECIPIENT_INTERFACE,
+                USB_CDC_REQ_SET_CONTROL_LINE_STATE,
                 0x01 | 0x2,  // DTR | RTS
                 0,
                 nullptr,
                 0,
                 5000);
-            if (ret != LIBUSB_SUCCESS) {
+            if (ret < LIBUSB_SUCCESS) {
                 throw std::runtime_error(libusb_strerror(ret));
             }
         }
@@ -283,7 +293,7 @@ class Usb {
         int ret;
 
         ret = libusb_init(&_context);
-        if (ret != LIBUSB_SUCCESS) {
+        if (ret < LIBUSB_SUCCESS) {
             throw std::runtime_error(libusb_strerror(ret));
         }
         // For the debug output form libusb:
@@ -339,7 +349,7 @@ class Usb {
             libusb_device_descriptor desc {};
 
             ret = libusb_get_device_descriptor(usb_dev, &desc);
-            if (ret != LIBUSB_SUCCESS) {
+            if (ret < LIBUSB_SUCCESS) {
                 throw std::runtime_error(libusb_strerror(ret));
             }
 
@@ -388,7 +398,7 @@ class Usb {
                     libusb_config_descriptor* cfg;
 
                     ret = libusb_get_config_descriptor(usb_dev, cfg_idx, &cfg);
-                    if (ret != LIBUSB_SUCCESS) {
+                    if (ret < LIBUSB_SUCCESS) {
                         throw std::runtime_error(libusb_strerror(ret));
                     }
 
