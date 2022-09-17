@@ -168,8 +168,12 @@ void write_board(
             auto write_this_time =
                 std::min((std::uint32_t)256, (std::uint32_t)(size - written));
             memcpy(write_data + 4, data.get() + written, write_this_time);
+            memset(
+                write_data + 4 + write_this_time,
+                0xff,
+                256 - write_this_time);
 
-            dev->write(write_data, 4 + write_this_time);
+            dev->write(write_data, sizeof(write_data));
             dev->read(status, sizeof(status));
             if (status[0] != 0) {
                 fprintf(
@@ -212,8 +216,12 @@ void write_board(
             auto verified_this_time =
                 std::min((std::uint32_t)256, (std::uint32_t)(size - verified));
             memcpy(verify_data + 4, data.get() + verified, verified_this_time);
+            memset(
+                verify_data + 4 + verified_this_time,
+                0xff,
+                256 - verified_this_time);
 
-            dev->write(verify_data, 4 + verified_this_time);
+            dev->write(verify_data, sizeof(verify_data));
             dev->read(status, sizeof(status));
             if (status[0] != 0) {
                 fprintf(
