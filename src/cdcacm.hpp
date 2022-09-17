@@ -174,7 +174,7 @@ class CdcAcmUsbDevice {
                     const auto* acm_desc = (AcmDesc*)buf;
                     supports_line_state_encoding =
                         acm_desc->bLength == sizeof(AcmDesc)
-                        && (acm_desc->bmCapabilities & 0x02);
+                        && (acm_desc->bmCapabilities & USB_CDC_CAP_LINE);
                     break;
                 }
 
