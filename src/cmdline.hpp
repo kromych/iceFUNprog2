@@ -29,8 +29,7 @@ enum class Action {
 };
 
 struct CommandLine {
-    CommandLine(int argc, char** argv)
-    {
+    CommandLine(int argc, char** argv) {
         auto argi = 1;
         while (argi < argc) {
             if (!strcmp(argv[argi], "-h")) {
@@ -140,9 +139,9 @@ struct CommandLine {
 
     // iceFUN uses a PIC16LF1459 to facilitate communication over USB (CDC-ACM)
     // and to provide programming for the SPI flash memory
-    std::uint16_t product_id { 0xffee }; // Devantech USB-ISS
-    std::uint16_t vendor_id { 0x04d8 }; // Microchip Technology Inc.
-    Action action { Action::UNKNOWN };
+    std::uint16_t product_id {0xffee};  // Devantech USB-ISS
+    std::uint16_t vendor_id {0x04d8};  // Microchip Technology Inc.
+    Action action {Action::UNKNOWN};
     std::string path;
     std::optional<std::uint32_t> offset;
     std::optional<std::uint32_t> size;

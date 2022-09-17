@@ -13,10 +13,10 @@
     CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 
+#include <fstream>
+
 #include "cdcacm.hpp"
 #include "cmdline.hpp"
-
-#include <fstream>
 
 constexpr std::uint32_t MAX_FLASH_SIZE = 1048576;
 
@@ -33,8 +33,7 @@ enum IceFunCommands : std::uint8_t {
     RELEASE_FPGA
 };
 
-std::uint8_t get_board_version(const std::shared_ptr<CdcAcmUsbDevice>& dev)
-{
+std::uint8_t get_board_version(const std::shared_ptr<CdcAcmUsbDevice>& dev) {
     const std::uint8_t get_ver = IceFunCommands::GET_VER;
     std::uint8_t ver[2] {};
 
@@ -49,8 +48,7 @@ std::uint8_t get_board_version(const std::shared_ptr<CdcAcmUsbDevice>& dev)
     throw std::runtime_error("Unable to get board version");
 }
 
-std::uint32_t reset_board(const std::shared_ptr<CdcAcmUsbDevice>& dev)
-{
+std::uint32_t reset_board(const std::shared_ptr<CdcAcmUsbDevice>& dev) {
     const std::uint8_t reset = IceFunCommands::RESET_FPGA;
     std::uint32_t flash_id = 0;
 
@@ -63,8 +61,7 @@ std::uint32_t reset_board(const std::shared_ptr<CdcAcmUsbDevice>& dev)
     throw std::runtime_error("Unable to reset the board");
 }
 
-std::uint8_t run_board(const std::shared_ptr<CdcAcmUsbDevice>& dev)
-{
+std::uint8_t run_board(const std::shared_ptr<CdcAcmUsbDevice>& dev) {
     std::uint8_t run = IceFunCommands::RELEASE_FPGA;
 
     if (dev->write(&run, sizeof(run)) == sizeof(run)) {
@@ -75,8 +72,7 @@ std::uint8_t run_board(const std::shared_ptr<CdcAcmUsbDevice>& dev)
     return run;
 }
 
-void cycle_board(const std::shared_ptr<CdcAcmUsbDevice>& dev)
-{
+void cycle_board(const std::shared_ptr<CdcAcmUsbDevice>& dev) {
     fprintf(stdout, "Cycling the board...\n");
 
     const auto board_version = get_board_version(dev);
@@ -89,11 +85,11 @@ void cycle_board(const std::shared_ptr<CdcAcmUsbDevice>& dev)
     fprintf(stdout, "Run: %#02x\n", run);
 }
 
-void write_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
+void write_board(
+    const std::shared_ptr<CdcAcmUsbDevice>& dev,
     std::optional<std::uint32_t> offset_opt,
     std::optional<std::uint32_t> size_opt,
-    const std::string& path)
-{
+    const std::string& path) {
     const std::uint32_t offset = offset_opt.value_or(0);
     if (offset > MAX_FLASH_SIZE) {
         throw std::runtime_error("The offset is too large");
@@ -127,17 +123,23 @@ void write_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
     const auto start_sector = (offset >> 16);
     const auto end_sector = ((offset + size) >> 16) + 1;
 
-    fprintf(stdout, "Erasing %d 64k sectors starting at sector %d\n",
-        end_sector - start_sector - 1, start_sector);
-    for (auto sector_idx = start_sector; sector_idx < end_sector; ++sector_idx) {
-        std::uint8_t erase[2] = { IceFunCommands::ERASE_64k,
-            (std::uint8_t)sector_idx };
+    fprintf(
+        stdout,
+        "Erasing %d 64k sectors starting at sector %d\n",
+        end_sector - start_sector - 1,
+        start_sector);
+    for (auto sector_idx = start_sector; sector_idx < end_sector;
+         ++sector_idx) {
+        std::uint8_t erase[2] = {
+            IceFunCommands::ERASE_64k,
+            (std::uint8_t)sector_idx};
 
         if (dev->write(erase, sizeof(erase)) != sizeof(erase)) {
             throw std::runtime_error("Error when erasing sectors");
         }
         if (dev->read(erase, 1) != 1) {
-            throw std::runtime_error("Error when getting status for the erased sectors");
+            throw std::runtime_error(
+                "Error when getting status for the erased sectors");
         }
 
         fprintf(stdout, ".");
@@ -145,8 +147,12 @@ void write_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
     fprintf(stdout, "\n");
 
     {
-        fprintf(stdout, "Writing %d bytes starting at offset %d from '%s' to the flash\n",
-            size, offset, path.c_str());
+        fprintf(
+            stdout,
+            "Writing %d bytes starting at offset %d from '%s' to the flash\n",
+            size,
+            offset,
+            path.c_str());
         std::uint32_t addr = offset;
         std::uint32_t written = 0;
         std::uint32_t end_addr = addr + size;
@@ -159,14 +165,20 @@ void write_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
             write_data[2] = (addr >> 8);
             write_data[3] = addr;
 
-            auto write_this_time = std::min((std::uint32_t)256, (std::uint32_t)(size - written));
+            auto write_this_time =
+                std::min((std::uint32_t)256, (std::uint32_t)(size - written));
             memcpy(write_data + 4, data.get() + written, write_this_time);
 
             dev->write(write_data, 4 + write_this_time);
             dev->read(status, sizeof(status));
             if (status[0] != 0) {
-                fprintf(stderr, "\nError when writing, status: #%04x #%04x #%04x #%04x\n",
-                    status[0], status[1], status[2], status[3]);
+                fprintf(
+                    stderr,
+                    "\nError when writing, status: #%04x #%04x #%04x #%04x\n",
+                    status[0],
+                    status[1],
+                    status[2],
+                    status[3]);
                 break;
             }
             fprintf(stdout, ".");
@@ -179,8 +191,12 @@ void write_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
     }
 
     {
-        fprintf(stdout, "Verifying %d bytes starting at offset %d from '%s' to the flash\n",
-            size, offset, path.c_str());
+        fprintf(
+            stdout,
+            "Verifying %d bytes starting at offset %d from '%s' to the flash\n",
+            size,
+            offset,
+            path.c_str());
         std::uint32_t addr = offset;
         std::uint32_t verified = 0;
         std::uint32_t end_addr = addr + size;
@@ -193,14 +209,20 @@ void write_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
             verify_data[2] = (addr >> 8);
             verify_data[3] = addr;
 
-            auto verified_this_time = std::min((std::uint32_t)256, (std::uint32_t)(size - verified));
+            auto verified_this_time =
+                std::min((std::uint32_t)256, (std::uint32_t)(size - verified));
             memcpy(verify_data + 4, data.get() + verified, verified_this_time);
 
             dev->write(verify_data, 4 + verified_this_time);
             dev->read(status, sizeof(status));
             if (status[0] != 0) {
-                fprintf(stderr, "\nError when verifying, status: #%04x #%04x #%04x #%04x\n",
-                    status[0], status[1], status[2], status[3]);
+                fprintf(
+                    stderr,
+                    "\nError when verifying, status: #%04x #%04x #%04x #%04x\n",
+                    status[0],
+                    status[1],
+                    status[2],
+                    status[3]);
                 break;
             }
             fprintf(stdout, ".");
@@ -216,12 +238,13 @@ void write_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
     fprintf(stdout, "Run: %#02x\n", run);
 }
 
-void read_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
+void read_board(
+    const std::shared_ptr<CdcAcmUsbDevice>& dev,
     std::optional<std::uint32_t> offset_opt,
     std::optional<std::uint32_t> size_opt,
-    const std::string& path)
-{
+    const std::string& path) {
     std::uint32_t offset = offset_opt.value_or(0);
+
     if (offset > MAX_FLASH_SIZE) {
         throw std::runtime_error("The offset is too large");
     }
@@ -242,8 +265,12 @@ void read_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
     const auto flash_id = reset_board(dev);
     fprintf(stdout, "Reset, flash ID: %#06x\n", flash_id);
 
-    fprintf(stdout, "Reading %d bytes starting at offset %d to '%s'\n",
-        size, offset, path.c_str());
+    fprintf(
+        stdout,
+        "Reading %d bytes starting at offset %d to '%s'\n",
+        size,
+        offset,
+        path.c_str());
 
     std::uint32_t read = 0;
     while (read < size) {
@@ -277,34 +304,47 @@ void read_board(const std::shared_ptr<CdcAcmUsbDevice>& dev,
     fprintf(stdout, "Run: %#02x\n", run);
 }
 
-void disable_stdio_buffering()
-{
+void disable_stdio_buffering() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     setvbuf(stderr, nullptr, _IONBF, 0);
 }
 
-void usage(const char* prog_name)
-{
-    fprintf(stderr, "Cross-platform programming tool for the Devantech iceFUN board.\n");
+void usage(const char* prog_name) {
+    fprintf(
+        stderr,
+        "Cross-platform programming tool for the Devantech iceFUN board.\n");
     fprintf(stderr, "Usage: %s <parameters> [options]\n", prog_name);
     fprintf(stderr, "Parameters:\n");
-    fprintf(stderr, "  -h                display usage information and exit.\n");
+    fprintf(
+        stderr,
+        "  -h                display usage information and exit.\n");
     fprintf(stderr, "  -c                Cycle the board.\n");
-    fprintf(stderr, "  -r <output file>  Save the contents of the on-board flash to the file.\n");
-    fprintf(stderr, "  -w <input file>   Write the contents of the file to the on-board flash.\n");
+    fprintf(
+        stderr,
+        "  -r <output file>  Save the contents of the on-board flash to the file.\n");
+    fprintf(
+        stderr,
+        "  -w <input file>   Write the contents of the file to the on-board flash.\n");
     fprintf(stderr, "Options:\n");
-    fprintf(stderr, "  -o <offset>       Optional start address for write or read (default: 0),\n");
-    fprintf(stderr, "                    the suffix of 'k' signifies kibibytes, 'M' stands for mebibytes,\n");
-    fprintf(stderr, "                    to use hexadecimals, prepend '0x' to the argument.\n");
-    fprintf(stderr, "  -s <size>         Optional size to write or read, same syntax as for -o.\n");
+    fprintf(
+        stderr,
+        "  -o <offset>       Optional start address for write or read (default: 0),\n");
+    fprintf(
+        stderr,
+        "                    the suffix of 'k' signifies kibibytes, 'M' stands for mebibytes,\n");
+    fprintf(
+        stderr,
+        "                    to use hexadecimals, prepend '0x' to the argument.\n");
+    fprintf(
+        stderr,
+        "  -s <size>         Optional size to write or read, same syntax as for -o.\n");
     fprintf(stderr, "Examples:\n");
     fprintf(stderr, "  %s -w turing.bin\n", prog_name);
     fprintf(stderr, "  %s -r butterfly.bin -o 0x40k\n", prog_name);
     fprintf(stderr, "\n");
 }
 
-int main(int argc, char** argv)
-try {
+int main(int argc, char** argv) try {
     disable_stdio_buffering();
 
     const auto params = CommandLine(argc, argv);
